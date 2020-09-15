@@ -60,8 +60,11 @@ makeSignMatrixPAGE = function(sign_names,
 #'     makeSignMatrixRank()
 makeSignMatrixRank <- function(sc_matrix,
                                sc_cluster_ids,
-                               gobject = NULL) {
+                               gobject = NULL, ties.method=c("random", "max")) {
 
+  if(ties.method %in% c("min", "average", "first", "last")){
+    stop("Chosen ties.method is not supported.")
+  }
   # check input
   if(length(sc_cluster_ids) != ncol(sc_matrix)) {
     stop('Number of columns of the scRNAseq matrix needs to have the same length as the cluster ids')
@@ -92,14 +95,14 @@ makeSignMatrixRank <- function(sc_matrix,
   gene_names_res = rep(gene_names, length(unique(sc_cluster_ids)))
 
   # create data.table with genes, mean expression per cluster, mean expression overall and cluster ids
-  comb_dt = data.table(genes = gene_names_res, mean_expr = mean_list_res[[1]], av_expr = av_expression_res, clusters = group_list_res[[1]])
+  comb_dt = data.table::data.table(genes = gene_names_res, mean_expr = mean_list_res[[1]], av_expr = av_expression_res, clusters = group_list_res[[1]])
 
   # data.table variables
   fold = mean_expr = av_expr = rankFold = clusters = NULL
 
   # calculate fold change and rank of fold-change
   comb_dt[, fold := log2(mean_expr+1)-log2(av_expr+1)]
-  comb_dt[, rankFold := frank(-fold, ties.method = 'first'), by = clusters]
+  comb_dt[, rankFold := data.table::frank(-fold, ties.method = ties.method), by = clusters]
 
   # create matrix
   comb_rank_mat = data.table::dcast.data.table(data = comb_dt, genes~clusters, value.var = 'rankFold')
@@ -427,17 +430,22 @@ do_rank_permutation <- function(sc_gene, n){
 #' @export
 runRankEnrich <- function(gobject,
                        sign_matrix,
-                       expression_values = c('normalized', 'scaled', 'custom'),
+                       expression_values = c('normalized', "raw", 'scaled', 'custom'),
                        reverse_log_scale = TRUE,
                        logbase = 2,
                        output_enrichment = c('original', 'zscore'),
+                       ties.method = c("random", "max"),
                        p_value = FALSE,
                        n_times = 1000,
                        name = NULL,
-                       return_gobject = TRUE) {
+                       return_gobject = TRUE, rbp_p = 0.99, num_agg=100) {
+
+  if(ties.method %in% c("min", "first", "last", "average")){
+    stop("Chosen ties.method is not supported.")
+  }
 
   # expression values to be used
-  values = match.arg(expression_values, c('normalized', 'scaled', 'custom'))
+  values = match.arg(expression_values, c('normalized', "raw", 'scaled', 'custom'))
   expr_values = select_expression_values(gobject = gobject, values = values)
 
   # check parameters
@@ -464,8 +472,20 @@ runRankEnrich <- function(gobject,
   }
 
   # fold change and ranking
-  geneFold = expr_values - mean_gene_expr
-  rankFold = t(matrixStats::colRanks(-geneFold, ties.method = "first"))
+  #geneFold = expr_values - mean_gene_expr
+  #rankFold = t(matrixStats::colRanks(-geneFold, ties.method = "first"))
+
+  ties_1 = ties.method
+  ties_2 = ties.method
+  if(ties.method=="max"){
+    ties_1 = "min"
+    ties_2 = "max"
+  }
+  #else ties_1=ties_2 is equal to random
+
+  geneFold = matrixStats::rowRanks(geneFold, ties.method = ties_1)
+  rankFold = t(matrixStats::colRanks(-geneFold, ties.method = ties_2))
+  
 
   rownames(rankFold) = rownames(expr_values)
   colnames(rankFold) = colnames(expr_values)
@@ -478,13 +498,13 @@ runRankEnrich <- function(gobject,
     filterRankFold = rankFold[interGene,]
 
     multiplyRank = (filterRankFold*filterSig[,i])^(1/2)
-    rpb = 0.01*(0.99^(multiplyRank-1))
+    rpb = (1.0 - rbp_p)*(rbp_p^(multiplyRank-1))
 
     vectorX = rep(NA, dim(filterRankFold)[2])
 
     for (j in (1:dim(filterRankFold)[2])){
       toprpb = sort(rpb[,j],decreasing = T)
-      zscore = sum(toprpb[1:100])
+      zscore = sum(toprpb[1:num_agg])
       vectorX[j] = zscore
     }
     enrichment[i,] = vectorX
@@ -500,7 +520,7 @@ runRankEnrich <- function(gobject,
   }
 
   enrichmentDT = data.table::data.table(cell_ID = rownames(enrichment))
-  enrichmentDT = cbind(enrichmentDT, as.data.table(enrichment))
+  enrichmentDT = cbind(enrichmentDT, data.table::as.data.table(enrichment))
 
 
   # default name for page enrichment
