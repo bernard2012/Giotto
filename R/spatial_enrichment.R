@@ -483,6 +483,7 @@ runRankEnrich <- function(gobject,
   }
   #else ties_1=ties_2 is equal to random
 
+  geneFold = expr_values
   geneFold = matrixStats::rowRanks(geneFold, ties.method = ties_1)
   rankFold = t(matrixStats::colRanks(-geneFold, ties.method = ties_2))
   
