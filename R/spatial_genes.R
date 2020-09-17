@@ -1397,7 +1397,7 @@ silhouetteRank_test = function(gobject,
                                 num_core = num_core,
                                 parallel_path = parallel_path,
                                 output = silh_output_dir,
-                                query_sizes = query_sizes)
+                                query_sizes = as.integer(query_sizes))
 
 
   return(output_silh)
